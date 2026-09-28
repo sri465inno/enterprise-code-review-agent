@@ -1,7 +1,7 @@
 ---
 name: enterprise-code-review
 description: Review a pull request against the functional and non-functional requirements in its linked Jira story or epic and against the enterprise standards bundled with this skill. Also identifies gaps in the business requirements and explains required fixes in plain language for non-technical readers. Use when asked to review a PR against requirements, standards, approved libraries or tech stack.
-argument-hint: "<PR URL> [JIRA-KEY of story or epic]"
+argument-hint: "<PR URL> [JIRA-KEY of story or epic | requirements text | path to requirements .md]"
 ---
 
 # Enterprise Code Review
@@ -10,19 +10,32 @@ Review one pull request against (a) the requirements in its linked Jira story or
 
 ## Inputs
 - PR URL (required).
-- Jira issue key of a story or an epic (optional). If missing, extract it from the PR title, head branch name, then PR body using the regex `[A-Z][A-Z0-9]+-\d+`. Use the first match.
+- Requirements source (optional), one of:
+  - Jira issue key of a story or an epic. If missing, extract it from the PR title, head branch name, then PR body using the regex `[A-Z][A-Z0-9]+-\d+`. Use the first match.
+  - Requirements text pasted in the request.
+  - Path to a requirements Markdown file in the reviewed repo.
+
+### Requirements source resolution
+Use the first source that is available, and state which one was used at the top of the report:
+1. **Jira** — a Jira key was resolved and the Atlassian MCP is connected (a tool call succeeds). If the Atlassian MCP is missing, unauthorized (401), or prompts for login, do not wait for authorization; fall through.
+2. **Requirements text in the request** — acceptance criteria / NFRs pasted by the user.
+3. **Requirements file** — the path given in the request, else the first existing file among `REQUIREMENTS.md`, `requirements.md`, `docs/requirements/*.md`, `docs/requirements.md` in the PR head branch (prefer a file whose name contains the Jira key if one was resolved).
+4. **PR description** — a section headed `Requirements`, `Acceptance criteria`, or `NFRs` in the PR body.
+If none is available, post a PR comment asking for requirements (Jira key, pasted text, or a requirements file) and stop.
+
+Non-Jira sources are parsed the same way: `Given/When/Then` lines, bullets under `Acceptance criteria`/`Functional` headings → FR-n; bullets under `Non-functional`/`NFR` headings → NFR-n. Epic/child-story handling applies only to Jira.
 
 ## Procedure
 1. Read every `*.md` file in the `standards/` directory of this skill (the skill's base directory is reported when it is invoked). Each file is one enterprise standard; treat every bullet under a `## Rules` heading as a checkable rule with the ID given in brackets (e.g. `[CS-03]`). `requirements-quality.md` applies to the Jira requirements, all other files apply to the code.
 2. Fetch the PR metadata and full diff with the git PR tools. Note changed files, languages, and any dependency manifest changes (`package.json`, `pom.xml`, `build.gradle`, `requirements*.txt`, `pyproject.toml`, `go.mod`, `*.csproj`, Dockerfiles, IaC).
-3. Resolve the Jira key (see Inputs). If none is found, post a PR comment asking for one and stop.
+3. Resolve the requirements source (see Requirements source resolution). If it is not Jira, read the requirements from that source and skip to step 5.
 4. Fetch the Jira issue through the Atlassian MCP: issue type, summary, description, acceptance criteria (description section or custom field), labels, components, and linked issues/sub-tasks. Also fetch linked Confluence pages if the ticket references them.
    - If the issue is an **epic**: also fetch its child stories (JQL `parent = <KEY>` or `"Epic Link" = <KEY>`). Treat the epic's description as scope/context and each child story's acceptance criteria as requirements. Mark stories not touched by this PR as `Out of scope for this PR` rather than `Not met`, unless the PR claims to deliver them.
    - If the issue is a **story/task/bug**: also fetch its parent epic (summary and description only) for context.
 5. Build the requirement list:
    - Functional requirements (FR-n): one per acceptance criterion or explicit behaviour in the ticket(s). For epics, prefix with the story key, e.g. `FR-PROJ-12-1`.
    - Non-functional requirements (NFR-n): explicit NFRs from the ticket(s) (performance, security, availability, accessibility, compliance, logging, etc.).
-   Quote the ticket text for each; do not invent requirements.
+   Quote the source text for each (ticket, pasted text, file, or PR description); do not invent requirements.
 6. Analyse the requirements for gaps (business-requirement review). Apply every rule in `requirements-quality.md` to the ticket(s) and, using the code as a second lens, look for:
    - Behaviour implemented in the code that no requirement asks for (possible scope creep or undocumented requirement).
    - Scenarios the code has to handle but the ticket is silent on (errors, empty/invalid input, permissions, limits, time zones, currencies, concurrency).
@@ -41,7 +54,8 @@ Review one pull request against (a) the requirements in its linked Jira story or
 
 ## Report template
 ```
-## Enterprise Code Review — <JIRA-KEY>: <ticket summary>
+## Enterprise Code Review — <JIRA-KEY or requirements source>: <summary>
+**Requirements source:** <Jira KEY | pasted text | file path | PR description>
 **Verdict:** <Approve | Approve with comments | Request changes>
 
 ### Summary for business stakeholders
@@ -57,7 +71,7 @@ Review one pull request against (a) the requirements in its linked Jira story or
 <details><summary>Technical details for developers</summary>
 
 ### Requirements traceability
-| ID | Requirement (from Jira) | Status | Evidence |
+| ID | Requirement (quoted from source) | Status | Evidence |
 |----|-------------------------|--------|----------|
 
 ### Standards compliance
